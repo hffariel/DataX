@@ -10,6 +10,7 @@ import com.alibaba.datax.plugin.rdbms.util.DBUtilErrorCode;
 import com.alibaba.datax.plugin.rdbms.util.DataBaseType;
 import com.dorisdb.connector.datax.plugin.writer.doriswriter.manager.DorisWriterManager;
 import com.dorisdb.connector.datax.plugin.writer.doriswriter.row.DorisISerializer;
+import com.dorisdb.connector.datax.plugin.writer.doriswriter.row.DorisJsonSerializer;
 import com.dorisdb.connector.datax.plugin.writer.doriswriter.row.DorisSerializerFactory;
 import com.dorisdb.connector.datax.plugin.writer.doriswriter.util.DorisWriterUtil;
 
@@ -89,12 +90,14 @@ public class DorisWriter extends Writer {
         private DorisWriterManager writerManager;
         private DorisWriterOptions options;
         private DorisISerializer rowSerializer;
+        private DorisJsonSerializer jsonserializer;
 
         @Override
         public void init() {
             options = new DorisWriterOptions(super.getPluginJobConf());
             writerManager = new DorisWriterManager(options);
             rowSerializer = DorisSerializerFactory.createSerializer(options);
+            jsonserializer = new DorisJsonSerializer(options.getColumns());
         }
 
         @Override
@@ -114,7 +117,7 @@ public class DorisWriter extends Writer {
                                                 record.getColumnNumber(),
                                                 options.getColumns().size()));
                     }
-                    writerManager.writeRecord(rowSerializer.serialize(record));
+                    writerManager.writeRecord(rowSerializer.serialize(record), jsonserializer.serialize(record));
                 }
             } catch (Exception e) {
                 throw DataXException.asDataXException(DBUtilErrorCode.WRITE_DATA_ERROR, e);

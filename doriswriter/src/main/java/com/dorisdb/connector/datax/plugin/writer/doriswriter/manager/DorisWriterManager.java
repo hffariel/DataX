@@ -9,14 +9,16 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.LinkedBlockingDeque;
 
+import com.alibaba.datax.common.element.Record;
 import com.dorisdb.connector.datax.plugin.writer.doriswriter.DorisWriterOptions;
+import com.dorisdb.connector.datax.plugin.writer.doriswriter.row.DorisJsonSerializer;
 import com.google.common.base.Strings;
 
 public class DorisWriterManager {
     
     private static final Logger LOG = LoggerFactory.getLogger(DorisWriterManager.class);
 
-    private final DorisStreamLoadVisitor dorisStreamLoadVisitor;
+    private DorisStreamLoadVisitor dorisStreamLoadVisitor;
     private final DorisWriterOptions writerOptions;
 
     private final List<String> buffer = new ArrayList<>();
@@ -25,6 +27,7 @@ public class DorisWriterManager {
     private volatile boolean closed = false;
     private volatile Exception flushException;
     private final LinkedBlockingDeque<DorisFlushTuple> flushQueue;
+    private List<String> jsonLines = new ArrayList<>();
 
     public DorisWriterManager(DorisWriterOptions writerOptions) {
         this.writerOptions = writerOptions;
@@ -33,9 +36,14 @@ public class DorisWriterManager {
         this.startAsyncFlushing();
     }
 
-    public final synchronized void writeRecord(String record) throws IOException {
+    public final synchronized void writeRecord(String record, String jsonRecord) throws IOException {
         checkFlushException();
         try {
+            if (record.indexOf("\n") >= 0) {
+                LOG.info("Column with \n detected:[\n{}\n]", record);
+                jsonLines.add(jsonRecord);
+                return;
+            }
             buffer.add(record);
             batchCount++;
             batchSize += record.getBytes().length;
@@ -73,6 +81,26 @@ public class DorisWriterManager {
             try {
                 String label = createBatchLabel();
                 if (batchCount > 0) LOG.debug(String.format("Doris Sink is about to close: label[%s].", label));
+                flush(label, true);
+                if (jsonLines.size() > 0) {
+                    writerOptions.getLoadProps().put("format", "json");
+                    writerOptions.getLoadProps().put("strip_outer_array", "true");
+                    this.dorisStreamLoadVisitor = new DorisStreamLoadVisitor(writerOptions);
+                    LOG.info("Start to load json lines:[\n{}\n]", jsonLines.size());
+                    int idx = 0;
+                    for (String jsonLine : jsonLines) {
+                        buffer.add(jsonLine);
+                        batchCount++;
+                        batchSize += jsonLine.getBytes().length;
+                        idx++;
+                        if (idx > 30000) {
+                            idx = 0;
+                            label = createBatchLabel();
+                            flush(label, true);
+                        }
+                    }
+                }
+                label = createBatchLabel();
                 flush(label, true);
             } catch (Exception e) {
                 throw new RuntimeException("Writing records to Doris failed.", e);
